@@ -117,6 +117,14 @@
             color: #333;
             border-left: 4px solid #667eea;
         }
+        /* 空白课程占位：无底色、无边框，视觉为空白，但可编辑 */
+        .subject.empty {
+            background: transparent;
+            border-left-color: transparent;
+            padding: 0;
+            margin: 0;
+            min-height: 20px;
+        }
         
         .subject.chinese { border-left-color: #e74c3c; }
         .subject.math { border-left-color: #3498db; }
@@ -205,6 +213,16 @@
             body { background: white; }
             .container { box-shadow: none; border-radius: 0; }
         }
+        
+        /* 工具栏与编辑态样式 */
+        .toolbar { display:flex; gap:10px; padding:12px 16px; border-bottom:1px solid #eee; background:#fafafa; }
+        .toolbar button { background:#fff; border:1px solid #ddd; color:#333; padding:8px 14px; border-radius:8px; cursor:pointer; transition:all .2s ease; }
+        .toolbar button:hover { box-shadow:0 3px 10px rgba(0,0,0,.08); }
+        .toolbar .primary { background:#667eea; border-color:#667eea; color:#fff; }
+        .toolbar .danger { background:#ff6b6b; border-color:#ff6b6b; color:#fff; }
+        .toolbar .ghost { background:#f3f4f6; }
+        .editable { outline:none; }
+        .editing .editable { box-shadow: inset 0 0 0 2px rgba(102,126,234,0.5); background:#fbfdff; }
     </style>
 </head>
 <body>
@@ -214,6 +232,16 @@
         <div class="header">
             <h1>一年级(2)班课程表</h1>
             <p>2025-2026学年 第一学期</p>
+        </div>
+        <div class="toolbar no-print">
+            <button id="toggleEdit" class="ghost">进入编辑</button>
+            <button id="saveData" class="primary">保存</button>
+            <button id="addPeriod">新增节次</button>
+            <button id="removePeriod">删除最后一节</button>
+            <button id="resetData" class="danger">重置为默认</button>
+            <button id="exportData">导出JSON</button>
+            <button id="importData">导入JSON</button>
+            <span id="statusText" style="margin-left:auto;color:#666;font-size:12px;"></span>
         </div>
         
         <div class="timetable">
@@ -304,8 +332,166 @@
         </div>
         
         <div class="footer">
-            <p>© 2024 一年级(2)班 | 课程表系统 | 请妥善保管</p>
+            <p>© 2025 一年级(2)班 | 课程表系统 | 请妥善保管</p>
         </div>
     </div>
+    <script>
+    (function(){
+        const STORAGE_KEY = 'timetable_grade1_class2_v1';
+        const container = document.querySelector('.container');
+        const toggleBtn = document.getElementById('toggleEdit');
+        const saveBtn = document.getElementById('saveData');
+        const addBtn = document.getElementById('addPeriod');
+        const removeBtn = document.getElementById('removePeriod');
+        const resetBtn = document.getElementById('resetData');
+        const exportBtn = document.getElementById('exportData');
+        const importBtn = document.getElementById('importData');
+        const statusText = document.getElementById('statusText');
+
+        const $all = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+        const tbody = document.querySelector('tbody');
+
+        function createPeriodRow(item){
+            const tr = document.createElement('tr');
+            const first = document.createElement('td');
+            first.className = 'period-label';
+            first.append(document.createTextNode(item.periodName || ''));
+            const time = document.createElement('span');
+            time.className = 'period-time';
+            time.textContent = item.periodTime || '';
+            first.appendChild(time);
+            tr.appendChild(first);
+            for(let i=0;i<5;i++){
+                const td = document.createElement('td');
+                const div = document.createElement('div');
+                const content = (item.subjects && item.subjects[i]) ? item.subjects[i] : '';
+                div.className = 'subject' + (content ? '' : ' empty');
+                div.innerHTML = content;
+                td.appendChild(div);
+                tr.appendChild(td);
+            }
+            return tr;
+        }
+
+        function createDividerRow(text){
+            const tr = document.createElement('tr');
+            tr.className = 'session-divider';
+            const td = document.createElement('td');
+            td.colSpan = 6;
+            const span = document.createElement('span');
+            span.textContent = text || '';
+            td.appendChild(span);
+            tr.appendChild(td);
+            return tr;
+        }
+
+        function setEditing(on){
+            container.classList.toggle('editing', on);
+            // 科目、时间、节次文本切换可编辑
+            $all('td > .subject, .period-label .period-time, .period-label').forEach(el => {
+                if(on){ el.classList.add('editable'); el.contentEditable = 'true'; }
+                else { el.classList.remove('editable'); el.removeAttribute('contenteditable'); }
+            });
+            toggleBtn.textContent = on ? '退出编辑' : '进入编辑';
+        }
+
+        function collect(){
+            const rows = $all('tbody tr');
+            const data = { rows: [] };
+            rows.forEach(row => {
+                if(row.classList.contains('session-divider')){
+                    const text = row.querySelector('span')?.textContent?.trim() || '';
+                    data.rows.push({ type:'divider', text });
+                    return;
+                }
+                const cells = $all('td', row);
+                if(cells.length !== 6) return;
+                const periodCell = cells[0];
+                const periodName = (periodCell.childNodes[0]?.textContent || '').trim();
+                const periodTime = periodCell.querySelector('.period-time')?.textContent?.trim() || '';
+                const subjects = cells.slice(1).map(c => c.querySelector('.subject')?.innerHTML || '');
+                data.rows.push({ type:'period', periodName, periodTime, subjects });
+            });
+            return data;
+        }
+
+        function apply(data){
+            tbody.innerHTML = '';
+            data.rows.forEach(item => {
+                if(item.type === 'divider') tbody.appendChild(createDividerRow(item.text));
+                else if(item.type === 'period') tbody.appendChild(createPeriodRow(item));
+            });
+            // 维持编辑态高亮
+            if(container.classList.contains('editing')) setEditing(true);
+        }
+
+        function save(){
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(collect()))
+            flash('已保存');
+        }
+
+        function load(){
+            const raw = localStorage.getItem(STORAGE_KEY);
+            if(!raw) return;
+            try{ apply(JSON.parse(raw)); }catch(err){ console.error(err); }
+        }
+
+        function reset(){ localStorage.removeItem(STORAGE_KEY); location.reload(); }
+        function flash(msg){ statusText.textContent = msg; setTimeout(()=>statusText.textContent='', 1500); }
+
+        let t = null;
+        document.addEventListener('input', e => {
+            const el = e.target;
+            if(!(el instanceof HTMLElement)) return;
+            if(el.classList.contains('editable')){
+                // 空白占位样式切换
+                if(el.classList.contains('subject')){
+                    const isEmpty = (el.innerText || el.textContent || '').trim() === '';
+                    el.classList.toggle('empty', isEmpty);
+                }
+                clearTimeout(t); t = setTimeout(save, 600);
+            }
+        }, true);
+
+        toggleBtn.addEventListener('click', ()=> setEditing(!container.classList.contains('editing')));
+        saveBtn.addEventListener('click', save);
+        addBtn.addEventListener('click', ()=>{
+            // 找到最后一个节次编号，推断下一个名称
+            const data = collect();
+            const lastPeriodIndex = [...data.rows].reverse().findIndex(r => r.type === 'period');
+            const count = data.rows.filter(r => r.type === 'period').length;
+            const nextNum = count + 1;
+            const item = { type:'period', periodName:`第${nextNum}节`, periodTime:'', subjects:['','','','',''] };
+            data.rows.push(item);
+            apply(data);
+            save();
+        });
+        removeBtn.addEventListener('click', ()=>{
+            const data = collect();
+            // 从后往前删除第一条 period
+            for(let i=data.rows.length-1;i>=0;i--){
+                if(data.rows[i].type === 'period'){ data.rows.splice(i,1); break; }
+            }
+            apply(data); save();
+        });
+        resetBtn.addEventListener('click', reset);
+        exportBtn.addEventListener('click', ()=>{
+            const blob = new Blob([JSON.stringify(collect(), null, 2)], {type:'application/json'});
+            const url = URL.createObjectURL(blob); const a = document.createElement('a');
+            a.href = url; a.download = 'timetable.json'; a.click(); URL.revokeObjectURL(url);
+        });
+        importBtn.addEventListener('click', ()=>{
+            const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/json';
+            input.onchange = e => { const f = e.target.files[0]; if(!f) return; const r = new FileReader();
+                r.onload = () => { try{ apply(JSON.parse(r.result)); save(); }catch{ alert('JSON 格式有误'); } };
+                r.readAsText(f); };
+            input.click();
+        });
+
+        // 初始化
+        load();
+        setEditing(false);
+    })();
+    </script>
 </body>
 </html>
